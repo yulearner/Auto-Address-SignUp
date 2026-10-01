@@ -82,11 +82,11 @@ class WindHubSite(BaseSite):
     # ---- 签到 ----
     # 已核实：签到功能位于个人中心页「每日签到」卡片内；
     # 已签到时按钮文案变为「今日已签到」且带 disabled 样式（按钮不可重复点击）
-    CHECKIN_KEYWORDS = ["每日签到", "今日签到", "立即签到", "签到", "Check in", "Check-in"]
+    CHECKIN_KEYWORDS = ["立即签到", "今日签到", "每日签到", "签到", "Check in", "Check-in"]
     # 精确候选：可点击（非 disabled）的签到按钮
     CHECKIN_CSS = [
+        'button:not(.semi-button-disabled):has-text("立即签到")',
         'button:not(.semi-button-disabled):has-text("签到")',
-        'button:not(.semi-button-disabled):has-text("每日签到")',
     ]
     CHECKIN_RESPONSE_PATTERNS = [
         "check_in", "check-in", "checkin", "sign_in", "sign-in", "qiandao",

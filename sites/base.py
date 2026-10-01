@@ -95,6 +95,15 @@ class BaseSite:
         self.page = runtime.page
         self._logger = logging.getLogger(f"site.{config.name}")
         self._used_saved_session = runtime.sessions.has_session(config.session_key)
+        # 本次运行中登录态是否已正向确认有效（is_logged_in 通过 / 登录成功）。
+        # 只有为 True 时调度器才允许把当前浏览器状态写回 session 文件，
+        # 防止登录中途超时/异常的「半登录」状态覆盖原本有效的登录态。
+        self._login_verified: bool = False
+
+    @property
+    def login_verified(self) -> bool:
+        """本次运行是否已确认登录有效（调度器据此决定是否持久化登录态）。"""
+        return self._login_verified
 
     # ------------------------------------------------------------------
     # 日志辅助（自动加站点名前缀）
@@ -477,6 +486,7 @@ class BaseSite:
             # 登录状态检测
             self.info("检测登录状态")
             if await self.is_logged_in():
+                self._login_verified = True
                 self.info("已登录" + ("（复用保存的登录态）" if self._used_saved_session else ""))
             else:
                 if self.runtime.run.manual_login:
@@ -487,6 +497,7 @@ class BaseSite:
                     await self.login()
                 if not await self.is_logged_in():
                     raise LoginError("登录流程完成后仍未检测到登录状态（账号密码错误或页面结构变化）")
+                self._login_verified = True
                 self.success("登录成功")
 
             # 签到
@@ -512,6 +523,9 @@ class BaseSite:
 
             # 按配置决定是否登出
             if self.config.logout_after:
+                # 登出后当前状态不再是有效登录态，禁止调度器再写回 session 文件
+                # （置于 try 之前：即使登出失败也不回写，避免半登出状态污染）
+                self._login_verified = False
                 try:
                     await self.logout()
                 except Exception as exc:  # noqa: BLE001
