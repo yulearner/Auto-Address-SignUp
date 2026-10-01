@@ -1,0 +1,76 @@
+# ============================================================
+# Auto Checkin 站点配置示例
+#
+# 使用方法：
+#   复制本文件为 config/sites.yaml，按需修改站点信息；
+#   账号密码通过环境变量提供（参考 .env.example），禁止写入本文件。
+# ============================================================
+
+browser:
+  headless: false          # 开发阶段可视化运行；正式环境可设为 true
+  timeout: 30000           # 页面默认超时（毫秒）
+  slow_mo: 100             # 每步操作延迟（毫秒），便于观察调试
+  viewport:
+    width: 1280
+    height: 800
+
+run:
+  site_timeout: 60         # 单个站点最大执行时间（秒），超时标记为 TIMEOUT
+  captcha_wait: 0          # 验证码出现时等待人工处理的秒数（0=直接记录并跳过）
+  save_session: true       # 是否保存登录态，下次运行时复用
+  database: data/checkin.db
+  sessions_dir: sessions
+  screenshots_dir: screenshots
+
+sites:
+  - name: "WindHub"
+    adapter: windhub       # 适配器名称（对应 sites/ 目录下的适配器）
+    enabled: true
+    url: "https://windhub.cc/console/personal"
+    login_url: "https://windhub.cc/login"
+    checkin:
+      enabled: true
+      # 签到页面 URL（与个人中心不同页时指定；为空则直接在 url 页面签到）
+      url: "https://windhub.cc/console/personal"
+    logout_after: false
+    # 账号信息只从环境变量读取（见 .env.example）
+    auth:
+      username_env: "WINDHUB_USERNAME"
+      password_env: "WINDHUB_PASSWORD"
+    # 站点特有超时（可选，不填沿用全局设置）
+    # site_timeout: 90
+    # browser_timeout: 45000
+    # 覆盖适配器默认选择器（可选，无需留空）
+    selectors:
+      logged_in:
+        - 'a[href*="/console"]'
+        - 'text=/退出登录|注销/'
+      # 登录方式切换 Tab（「账号登录 / 邮箱登录」二选一页面，先切到邮箱登录）
+      login_tab:
+        - "text=邮箱登录"
+      username:
+        - 'input[placeholder*="邮箱"]'
+        - 'input[placeholder*="用户名"]'
+      password:
+        - 'input[type="password"]'
+      submit:
+        - 'button:has-text("登录")'
+        - 'button[type="submit"]'
+      checkin_keywords:
+        - "每日签到"
+        - "签到"
+      checkin_response:
+        - "check_in"
+        - "checkin"
+
+  # ---- 新增站点示例（复制并修改即可）----
+  # - name: "Example API"
+  #   adapter: windhub      # 若站点同为 New API 框架，可直接复用该适配器
+  #   enabled: true
+  #   url: "https://example.com/console/personal"
+  #   login_url: "https://example.com/login"
+  #   checkin:
+  #     enabled: true
+  #   auth:
+  #     username_env: "EXAMPLE_USERNAME"
+  #     password_env: "EXAMPLE_PASSWORD"

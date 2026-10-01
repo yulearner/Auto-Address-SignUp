@@ -1,0 +1,7 @@
+# Auto Checkin dependencies
+# Python 3.10+
+
+playwright>=1.42.0
+PyYAML>=6.0.1
+python-dotenv>=1.0.0
+beautifulsoup4>=4.12.0

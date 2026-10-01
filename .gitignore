@@ -1,0 +1,53 @@
+# ===== 敏感信息（禁止提交）=====
+.env
+sessions/
+screenshots/
+logs/
+data/
+
+# ===== 真实站点配置（示例文件保留入库）=====
+config/sites.yaml
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+.idea/
+.vscode/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+logs/
+
+# Sensitive files
+config_local.*
+secrets.*
+credentials.*
+cookies.*
+tokens.*
+
+# OS
+.DS_Store
+Thumbs.db
