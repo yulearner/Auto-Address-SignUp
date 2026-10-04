@@ -13,7 +13,7 @@ from typing import Awaitable, Callable
 
 from playwright.async_api import Page, TimeoutError as PWTimeoutError
 
-from core.exceptions import CaptchaDetectedError, LoginError
+from core.exceptions import CaptchaDetectedError, LoginError, SiteError
 from core.page_utils import detect_captcha, find_first_visible, wait_page_ready
 
 logger = logging.getLogger(__name__)
@@ -107,7 +107,9 @@ async def form_login(
     try:
         await page.goto(login_url, wait_until="domcontentloaded", timeout=nav_timeout_ms)
     except PWTimeoutError:
-        raise LoginError(f"登录页加载超时: {login_url}")
+        # 页面加载超时属于环境/网络故障而非凭据错误，按 SiteError 上报（状态 FAILED），
+        # 避免被误归类为 LOGIN_FAILED（与 BaseSite.open 的超时处理保持一致）
+        raise SiteError(f"登录页加载超时: {login_url}")
     await wait_page_ready(page, nav_timeout_ms)
 
     if await detect_captcha(page):

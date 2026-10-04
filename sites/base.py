@@ -495,7 +495,16 @@ class BaseSite:
                 else:
                     self.info("未登录，执行登录流程")
                     await self.login()
-                if not await self.is_logged_in():
+                # 登录流程完成后稍作轮询确认：SPA 状态写入/页面渲染需要时间，
+                # 立即单次检测容易因页面尚未就绪而误报登录失败
+                confirmed = False
+                for attempt in range(3):
+                    if await self.is_logged_in():
+                        confirmed = True
+                        break
+                    if attempt < 2:
+                        await asyncio.sleep(2.0)
+                if not confirmed:
                     raise LoginError("登录流程完成后仍未检测到登录状态（账号密码错误或页面结构变化）")
                 self._login_verified = True
                 self.success("登录成功")
@@ -545,8 +554,12 @@ class BaseSite:
             )
             self.error(f"需要人工处理验证码: {exc}")
         except LoginError as exc:
-            # 登录失败：本地保存的登录态很可能已失效，删除以便下次重新登录
-            self.runtime.sessions.delete(self.config.session_key)
+            # 注意：登录失败【不删除】本地登录态文件。页面加载异常、选择器未命中、
+            # 登录页超时等「非凭据性失败」不代表已保存的登录态失效；贸然删除会把
+            # 仍然有效的登录态一并毁掉（下次只能人工重新登录）。失效的登录态会在
+            # 下次运行 is_logged_in() 检出未登录后自动重新登录并覆盖，无需此处清理。
+            # 登录态删除只发生在：显式登出（logout_after）与 remove_site.py。
+            self.warning(f"登录失败（保留原有登录态文件，下次运行将自动重试）: {exc}")
             shot = None
             try:
                 shot = await self._screenshot("login_failed")

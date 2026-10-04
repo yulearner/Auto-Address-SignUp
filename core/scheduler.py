@@ -6,7 +6,7 @@
 - 单站点失败不影响其他站点（所有异常在 ``BaseSite.run`` 与此处兜底）；
 - 登录态白名单保存：仅当本次运行确认登录有效（login_verified）时才写回
   session 文件，防止超时/异常中断时用未确认的浏览器状态覆盖有效登录态；
-  登录失败则清理登录态。
+  失败路径一律不写回也【不删除】原 session 文件（显式登出/remove_site 除外）。
 """
 
 from __future__ import annotations
@@ -84,7 +84,7 @@ class Scheduler:
     # 单站点执行
     # ------------------------------------------------------------------
     async def _run_one(self, cfg: SiteConfig) -> CheckinResult:
-        """处理单个站点：创建隔离上下文 → 执行 → 保存/清理登录态 → 关闭上下文。"""
+        """处理单个站点：创建隔离上下文 → 执行 → 白名单保存登录态 → 关闭上下文。"""
         start = time.monotonic()
         context = None
         try:
@@ -122,11 +122,11 @@ class Scheduler:
                     screenshot=shot,
                 )
 
-            # 登录态保存/清理（白名单策略，防止有效登录态被脏状态覆盖）：
-            # - LOGIN_FAILED：BaseSite 已删除失效登录态，不再保存；
-            # - 其余状态：仅当本次运行中已正向确认登录有效（login_verified）
-            #   才允许写回。超时/验证码/未知异常中断且未确认登录时绝不覆盖
-            #   原有 session 文件，下次运行可继续复用上次的有效登录态。
+            # 登录态保存（白名单策略，防止有效登录态被脏状态破坏）：
+            # - 仅当本次运行中已正向确认登录有效（login_verified）才允许写回；
+            # - 其余一律不写回、也不删除原 session 文件：超时/验证码/登录失败/
+            #   页面加载异常等场景下原登录态可能仍然有效，下次运行可继续复用；
+            # - 登录态删除只发生在显式登出（logout_after）与 remove_site.py。
             if result.status != CheckinStatus.LOGIN_FAILED and site.login_verified:
                 await self._browser.save_context_state(cfg, context)
             elif cfg.save_session and self._sessions.has_session(cfg.session_key):

@@ -57,7 +57,7 @@ class SessionManager:
             logger.warning("[%s] session 保存失败: %s", site_key, exc)
 
     def delete(self, site_key: str) -> None:
-        """删除 session（登出后或登录态失效时调用）。"""
+        """删除 session（仅在显式登出时调用；登录失败不再删除登录态，见 BaseSite.run）。"""
         try:
             self._state_path(site_key).unlink(missing_ok=True)
         except OSError as exc:
