@@ -28,7 +28,11 @@ ROOT = Path(__file__).parent
 SITES_YAML = ROOT / "config" / "sites.yaml"
 DOTENV = ROOT / ".env"
 
-NAME_RE = re.compile(r"^\s*-\s*name:\s*\"?([^\"#\s]+)\"?\s*$")
+# 站点条目行：- name: "带空格的名称" / '单引号' / 不带引号（可含空格，行内 # 后视为注释）。
+# 注意：名称可能包含空格（如 "Ark API"、"魔方 API"），不能用 [^"#\s]+ 这类排除空格的模式。
+NAME_RE = re.compile(
+    r"^\s*-\s*name:\s*(?:\"([^\"]*)\"|'([^']*)'|([^#]+?))\s*(?:#.*)?$"
+)
 
 
 def session_key(name: str) -> str:
@@ -41,8 +45,14 @@ def load_yaml() -> dict:
 
 
 def entries(lines: list[str]) -> list[tuple[str, int]]:
-    """所有站点条目 [(名称, '- name:' 所在行号)]。"""
-    return [(m.group(1), i) for i, l in enumerate(lines) for m in [NAME_RE.match(l)] if m]
+    """所有站点条目 [(名称, '- name:' 所在行号)]。名称取引号内或裸值（可含空格）。"""
+    result = []
+    for i, l in enumerate(lines):
+        m = NAME_RE.match(l)
+        if m:
+            name = next(g for g in m.groups() if g is not None).strip()
+            result.append((name, i))
+    return result
 
 
 def block_start(lines: list[str], idx: int) -> int:
