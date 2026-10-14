@@ -70,6 +70,15 @@ def build_block(args: argparse.Namespace, prefix: str) -> str:
     checkin_lines = ["    checkin:", "      enabled: true"]
     if args.checkin_url:
         checkin_lines.append(f'      url: "{args.checkin_url}"')
+    if args.oauth:
+        # OAuth 站点无账密表单：不生成 auth 块（配置层据此跳过缺失环境变量提示）
+        auth_lines = ["    # OAuth 登录站点：无账密表单，首次登录请用 --manual-login"]
+    else:
+        auth_lines = [
+            "    auth:",
+            f'      username_env: "{prefix}_USERNAME"',
+            f'      password_env: "{prefix}_PASSWORD"',
+        ]
     lines = [
         f"  # {args.name}（{root_of(args.url)}，由 add_site.py 生成）",
         f'  - name: "{args.name}"',
@@ -78,9 +87,7 @@ def build_block(args: argparse.Namespace, prefix: str) -> str:
         f'    url: "{args.url}"',
         f'    login_url: "{args.login_url}"',
         *checkin_lines,
-        "    auth:",
-        f'      username_env: "{prefix}_USERNAME"',
-        f'      password_env: "{prefix}_PASSWORD"',
+        *auth_lines,
         "",
     ]
     return "\n".join(lines)
@@ -103,6 +110,9 @@ def main() -> None:
     parser.add_argument("--checkin-url", default="",
                         help="签到页 URL（与 url 不同页时才需要）")
     parser.add_argument("--disabled", action="store_true", help="添加但暂不启用")
+    parser.add_argument("--oauth", action="store_true",
+                        help="OAuth 登录站点（如 ldc-shop 框架）：无账密表单，"
+                             "不生成 auth 块，首次登录用 --manual-login")
     parser.add_argument("--dry-run", action="store_true", help="只打印生成的配置，不写入")
     args = parser.parse_args()
 
@@ -153,7 +163,18 @@ def main() -> None:
         raise SystemExit("错误：写入后校验失败（新站点未出现在 sites 列表），已回滚")
     print(f"✓ 已写入 config/sites.yaml（共 {len(sites_after)} 个站点条目）")
 
-    print(f"""
+    if args.oauth:
+        print(f"""
+后续步骤（OAuth 站点，无账密表单）：
+  1. 首次运行（必须在浏览器中手动完成 OAuth 登录，凭据不落盘）：
+       python main.py --manual-login --site {args.name}
+  2. 校准选择器（登录后分析真实 DOM）：
+       python probe_dom.py --site {session_key(args.name)} --url {args.url}
+  3. 之后全自动签到：
+       python main.py --site {args.name}
+""")
+    else:
+        print(f"""
 后续步骤：
   1. 在 .env 中设置凭据（或用 --manual-login 手动登录，无需密码落盘）：
        {prefix}_USERNAME=你的账号

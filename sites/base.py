@@ -87,6 +87,9 @@ class BaseSite:
     ]
     CHECKIN_TOAST: list[str] = []               # 签到结果提示候选
     ALREADY_HINTS: list[str] = ["text=/已签到|明日再来|已领取|今日已签/"]
+    CHECKIN_DIALOG: list[str] = []             # 点击签到后的选择弹窗候选（空=无此环节）
+    CHECKIN_DIALOG_OPTIONS: list[str] = []     # 弹窗内“真选项”关键词（空=除取消外都算）
+    CHECKIN_DIALOG_WAIT: float = 5.0           # 等待人工选择秒数，超时自动选第一个
     BALANCE_SELECTORS: list[str] = []            # 余额元素候选
 
     def __init__(self, config: SiteConfig, runtime: SiteRuntime) -> None:
@@ -150,7 +153,19 @@ class BaseSite:
             response_patterns=self._cfg("checkin_response", self.CHECKIN_RESPONSE_PATTERNS),
             toast=self._cfg("checkin_toast", self.CHECKIN_TOAST),
             already_hints=self._cfg("already_hints", self.ALREADY_HINTS),
+            dialog_selectors=self._cfg("checkin_dialog", self.CHECKIN_DIALOG),
+            dialog_option_filters=self._cfg(
+                "checkin_dialog_options", self.CHECKIN_DIALOG_OPTIONS
+            ),
+            dialog_wait_seconds=self._dialog_wait_seconds(),
         )
+
+    def _dialog_wait_seconds(self) -> float:
+        """读取弹窗人工等待秒数（selectors.checkin_dialog_wait，可覆盖类默认值）。"""
+        raw = (self.config.selectors or {}).get("checkin_dialog_wait")
+        if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+            return float(raw)
+        return self.CHECKIN_DIALOG_WAIT
 
     @property
     def nav_timeout_ms(self) -> int:
@@ -293,7 +308,7 @@ class BaseSite:
 
             try:
                 outcome = await click_and_await(
-                    self.page, button, selectors, response_timeout_s=15.0
+                    self.page, button, selectors, response_timeout_s=15.0, log=self.info
                 )
             except CaptchaDetectedError:
                 # 验证码需人工处理，继续尝试其他按钮没有意义，直接上抛
@@ -349,7 +364,7 @@ class BaseSite:
             return None
         try:
             return await click_and_await(
-                self.page, button, selectors, response_timeout_s=15.0
+                self.page, button, selectors, response_timeout_s=15.0, log=self.info
             )
         except CheckinError as exc:
             self._logger.debug(self._msg(f"Esc 重试后仍点击失败: {str(exc)[:60]}"))

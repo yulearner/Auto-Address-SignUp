@@ -8,6 +8,7 @@ from typing import Type
 from core.exceptions import ConfigError
 from models.config import SiteConfig
 from sites.base import BaseSite, SiteRuntime
+from sites.ldcshop import LdcShopSite
 from sites.windhub import WindHubSite
 
 logger = logging.getLogger(__name__)
@@ -20,6 +21,7 @@ class SiteManager:
         self._adapters: dict[str, Type[BaseSite]] = {}
         # 内置适配器注册（新增站点在此登记即可）
         self.register(WindHubSite)
+        self.register(LdcShopSite)
 
     def register(self, adapter_cls: Type[BaseSite]) -> None:
         """注册站点适配器类。"""

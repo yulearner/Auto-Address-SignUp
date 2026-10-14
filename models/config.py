@@ -147,7 +147,9 @@ def _parse_site(index: int, raw: dict[str, Any]) -> SiteConfig:
     username = os.environ.get(username_env) if username_env else None
     password = os.environ.get(password_env) if password_env else None
 
-    if not username or not password:
+    # 仅在站点声明了账密环境变量（auth 块）时才提示缺失；
+    # OAuth 类站点（如 ldc-shop）不配置 auth 块，无需提示
+    if (username_env or password_env) and (not username or not password):
         # 不输出任何账号值，仅提示变量名
         missing = [v for v, ok in (
             (username_env, bool(username)), (password_env, bool(password))

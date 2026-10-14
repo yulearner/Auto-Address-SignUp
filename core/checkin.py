@@ -35,6 +35,13 @@ class CheckinSelectors:
     toast: list[str] = field(default_factory=list)
     # “今日已签到”页面特征候选
     already_hints: list[str] = field(default_factory=list)
+    # 点击签到后可能弹出的「选择弹窗」候选（如 ldc-shop 选择签到奖励模式）。
+    # 为空表示该站点无此环节，完全不检测（默认关闭，其他站点零影响）。
+    dialog_selectors: list[str] = field(default_factory=list)
+    # 选择弹窗内可视为“真选项”的按钮（未命中则视为取消/关闭，自动选择时跳过）
+    dialog_option_filters: list[str] = field(default_factory=list)
+    # 弹窗出现后等待人工选择的秒数，超时自动点第一个真选项
+    dialog_wait_seconds: float = 5.0
 
 
 @dataclass
@@ -190,11 +197,143 @@ async def _wait_toast(page: Page, selectors: list[str], timeout_s: float = 8.0) 
         return None
 
 
+# 弹窗「取消/关闭」类按钮文本：自动选择时跳过，只有用户手动点才生效
+_DIALOG_CANCEL_TEXTS = ("取消", "关闭", "cancel", "close", "返回")
+
+
+async def _find_checkin_dialog(
+    page: Page, dialog_selectors: list[str], timeout_s: float = 5.0
+) -> Locator | None:
+    """点击签到按钮后，检测是否弹出「选择弹窗」（如 ldc-shop 的签到奖励模式选择）。
+
+    配置了 dialog_selectors 才检测；返回第一个可见的弹窗 Locator，未出现返回 None。
+    """
+    if not dialog_selectors:
+        return None
+    deadline = asyncio.get_event_loop().time() + timeout_s
+    while asyncio.get_event_loop().time() < deadline:
+        for sel in dialog_selectors:
+            try:
+                loc = page.locator(sel)
+                if await loc.count() > 0 and await loc.first.is_visible():
+                    return loc.first
+            except Exception:  # noqa: BLE001 - 非法选择器
+                continue
+        await asyncio.sleep(0.2)
+    return None
+
+
+async def _parse_dialog_options(dialog: Locator) -> tuple[str, list[tuple[Locator, str]]]:
+    """读取弹窗标题与全部可点击选项 [(按钮 Locator, 文本)]。"""
+    title = ""
+    try:
+        title_loc = dialog.locator("[data-slot='dialog-title'], h2, [role='dialog-title']")
+        if await title_loc.count() > 0:
+            title = ((await title_loc.first.inner_text()) or "").strip()
+    except Exception:  # noqa: BLE001
+        title = ""
+    options: list[tuple[Locator, str]] = []
+    try:
+        buttons = dialog.locator("button")
+        for i in range(min(await buttons.count(), 12)):
+            el = buttons.nth(i)
+            try:
+                text = ((await el.inner_text()) or "").strip().replace("\n", " / ")
+            except Exception:  # noqa: BLE001
+                continue
+            if text:
+                options.append((el, text))
+    except Exception:  # noqa: BLE001
+        pass
+    return title, options
+
+
+def _is_real_dialog_option(
+    option_text: str, dialog_option_filters: list[str]
+) -> bool:
+    """判断弹窗按钮是否为“真选项”（而非取消/关闭/关闭图标）。
+
+    配置了 dialog_option_filters 时：命中任一关键词才算真选项；
+    未配置时：只要不是取消/关闭类文本即视为真选项。
+    """
+    low = option_text.lower()
+    if any(c.lower() in low for c in _DIALOG_CANCEL_TEXTS):
+        return False
+    if dialog_option_filters:
+        return any(f.lower() in low for f in dialog_option_filters)
+    return True
+
+
+async def handle_checkin_dialog(
+    page: Page, selectors: CheckinSelectors, log=None
+) -> str | None:
+    """处理点击签到按钮后的「选择弹窗」（不绕过任何安全机制）。
+
+    流程（对应需求：弹出选择时输出给用户，用户选择，5 秒内没选默认第一个）：
+    1. 检测弹窗（未配置 dialog_selectors 的站点直接返回 None，无任何影响）；
+    2. 日志输出弹窗标题 + 全部选项文本，提示用户可在浏览器中手动选择；
+    3. 轮询等待用户选择（弹窗消失即视为已选，尊重用户的选择，不重复点击）；
+    4. 超时未选择 → 自动点击第一个「真选项」（跳过取消/关闭类按钮）。
+
+    :param log: 可选的日志回调（如 BaseSite.info），未提供时用模块 logger
+    :return: 实际生效的选择描述（如「试试手气 (1-20 积分 随机)」），无弹窗返回 None
+    """
+
+    def _log(msg: str) -> None:
+        if log is not None:
+            log(msg)  # 日志回调（如 BaseSite.info，自带站点名前缀）
+        else:
+            logger.info(msg)
+
+    dialog = await _find_checkin_dialog(page, selectors.dialog_selectors, timeout_s=5.0)
+    if dialog is None:
+        return None
+
+    title, options = await _parse_dialog_options(dialog)
+    wait_s = selectors.dialog_wait_seconds
+    _log(
+        f"签到需要选择：{title or '弹窗'} —— 选项: "
+        + " | ".join(t for _, t in options[:6])
+        + f"（请在浏览器中选择，{wait_s:g} 秒内未选择将自动选第一个）"
+    )
+
+    real_options = [
+        (el, t) for el, t in options if _is_real_dialog_option(t, selectors.dialog_option_filters)
+    ]
+
+    # 等待用户手动选择：弹窗消失即视为用户已选择（无法得知具体点了哪个，
+    # 不猜测，只确认“用户已手动完成选择”这一事实）
+    deadline = asyncio.get_event_loop().time() + selectors.dialog_wait_seconds
+    while asyncio.get_event_loop().time() < deadline:
+        await asyncio.sleep(0.5)
+        try:
+            if await dialog.count() == 0 or not await dialog.is_visible():
+                _log("检测到弹窗已关闭，视为用户已手动完成选择，尊重用户的选择")
+                return "用户已手动选择"
+        except Exception:  # noqa: BLE001 - 弹窗节点被移除同样视为已选择
+            _log("检测到弹窗已关闭，视为用户已手动完成选择，尊重用户的选择")
+            return "用户已手动选择"
+
+    # 超时：自动点击第一个真选项（不点取消/关闭）
+    if not real_options:
+        _log("弹窗内未找到可自动选择的真选项，请人工处理")
+        return None
+    btn, text = real_options[0]
+    _log(f"未检测到手动选择，自动选择第一个选项: {text[:40]}")
+    try:
+        await btn.click(timeout=3000)
+        return text
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("自动点击弹窗选项失败: %s", str(exc)[:80])
+        return None
+
+
 async def click_and_await(
     page: Page,
     button: Locator,
     selectors: CheckinSelectors,
     response_timeout_s: float = 15.0,
+    log=None,
 ) -> CheckinOutcome:
     """点击签到按钮并等待服务器响应/页面提示，返回原始结果。
 
@@ -204,6 +343,10 @@ async def click_and_await(
     1. 签到接口 HTTP 响应（配置 response_patterns 时，最强）；
     2. 点击后新出现的 toast（点击前已存在的常驻提示不算）；
     3. 按钮自身状态变化（如“立即签到”→“今日已签到”）。
+
+    若站点配置了 dialog_selectors（如 ldc-shop 点击签到后先弹「选择签到模式」），
+    点击后先处理选择弹窗（输出选项 → 等待人工选择 → 超时自动选第一个），
+    再继续等待签到结果信号。
 
     页面常驻文本（日历面板里的“已签到 3 天”“签到成功可得 10 积分”等）
     一律不作为结果依据；点击导致页面跳转后，新页面的任何文本同样不可信
@@ -260,14 +403,25 @@ async def click_and_await(
 
     # 给弹窗 / toast / 页面跳转一点发生时间（不使用长固定等待）
     await asyncio.sleep(0.3)
+
+    # 选择弹窗处理（仅配置了 dialog_selectors 的站点生效，如 ldc-shop 的
+    # 「选择签到模式」）：输出选项 → 等待人工选择 → 超时自动选第一个。
+    # 人工选择/自动选择完成后，签到请求才真正发出，随后继续走结果信号判定。
+    dialog_choice: str | None = None
+    if outcome is None and selectors.dialog_selectors:
+        dialog_choice = await handle_checkin_dialog(page, selectors, log=log)
+
     if outcome is None and page.url != url_before:
         # 点击导致页面跳转（如误点活动页链接）：跳转后整页文本不可信
         logger.debug("点击后页面发生跳转，忽略页面文本类信号")
         return CheckinOutcome(status="unknown", message=None, reward=None)
 
-    # 信号一：点击后新出现的 toast（点击前已存在的常驻提示忽略）
+    # 信号一：点击后新出现的 toast（点击前已存在的常驻提示忽略）。
+    # 经过选择弹窗的签到：签到请求在选项确定后才发出，toast 等待放宽一倍
     if outcome is None and selectors.toast:
-        toast_text = await _wait_toast(page, selectors.toast, timeout_s=4.0)
+        toast_text = await _wait_toast(
+            page, selectors.toast, timeout_s=8.0 if dialog_choice else 4.0
+        )
         if toast_text:
             toast_line = toast_text.strip()
             if toast_line in toast_baseline:
