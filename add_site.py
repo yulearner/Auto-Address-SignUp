@@ -29,11 +29,19 @@ ROOT = Path(__file__).parent
 SITES_YAML = ROOT / "config" / "sites.yaml"
 
 
-def env_prefix(name: str) -> str:
-    """站点名 → 环境变量前缀（仅字母数字，其余转下划线，大写）。"""
+def env_prefix(name: str, url: str = "") -> str:
+    """站点名 → 环境变量前缀（仅字母数字，其余转下划线，大写）。
+
+    中文等非 ASCII 站名派生的前缀会退化成短串甚至为空（如「南梁API」→ API_、
+    「测试站」→ 空），多站共用同前缀会导致 .env 凭据互串 —— 此时改用 URL 域名派生。
+    """
     prefix = re.sub(r"[^A-Za-z0-9]+", "_", name).strip("_").upper()
-    if not prefix:
-        raise SystemExit("错误：站点名必须包含字母或数字（用于生成环境变量名）")
+    if (not prefix) or (any(ord(ch) > 127 for ch in name) and len(prefix) < 4):
+        if url:
+            host = re.sub(r"^https?://", "", root_of(url)).upper()
+            prefix = re.sub(r"[^A-Z0-9]+", "_", host).strip("_") or prefix
+        if not prefix:
+            raise SystemExit("错误：无法生成环境变量前缀（站点名与 URL 均无可用字符）")
     return prefix
 
 
@@ -66,7 +74,7 @@ def detect_framework(url: str) -> tuple[bool, str | None, str | None]:
     return False, None, None
 
 
-def build_block(args: argparse.Namespace, prefix: str) -> str:
+def build_block(args: argparse.Namespace, prefix: str, sk: str = "") -> str:
     checkin_lines = ["    checkin:", "      enabled: true"]
     if args.checkin_url:
         checkin_lines.append(f'      url: "{args.checkin_url}"')
@@ -83,6 +91,11 @@ def build_block(args: argparse.Namespace, prefix: str) -> str:
         f"  # {args.name}（{root_of(args.url)}，由 add_site.py 生成）",
         f'  - name: "{args.name}"',
         f"    adapter: {args.adapter}",
+    ]
+    if sk:
+        # 显式登录态文件名：非 ASCII 站名派生 key 会碰撞（如「南梁API」「烁API」→ api）
+        lines.append(f'    session_key: "{sk}"')
+    lines += [
         f"    enabled: {str(not args.disabled).lower()}",
         f'    url: "{args.url}"',
         f'    login_url: "{args.login_url}"',
@@ -120,7 +133,7 @@ def main() -> None:
         raise SystemExit("错误：config/sites.yaml 不存在，请先复制 sites.example.yaml")
     args.url = args.url.strip().rstrip("/")
     args.login_url = args.login_url.strip() or root_of(args.url) + "/login"
-    prefix = env_prefix(args.name)
+    prefix = env_prefix(args.name, args.url)
 
     # 重复检测
     sites = load_sites(SITES_YAML)
@@ -129,6 +142,27 @@ def main() -> None:
             raise SystemExit(f"错误：站点名 '{args.name}' 已存在")
         if str(s.get("url", "")).rstrip("/") == args.url:
             raise SystemExit(f"错误：URL 已被站点 '{s.get('name')}' 使用: {args.url}")
+
+    # 环境变量前缀冲突检测：同前缀 = .env 凭据互串（如「南梁API」「烁API」曾共用 API_*）
+    used_envs = {str((s.get("auth") or {}).get("username_env") or "").upper() for s in sites} - {""}
+    if f"{prefix}_USERNAME" in used_envs:
+        raise SystemExit(
+            f"错误：环境变量前缀 {prefix}_ 与现有站点冲突（凭据会互串），请更换站点名"
+        )
+
+    # 登录态 key：非 ASCII 站名或派生 key 与现有站冲突时，显式写入域名派生 key
+    def _key_of(entry: dict) -> str:
+        sk_ = str(entry.get("session_key") or "").strip().lower()
+        return sk_ or session_key(str(entry.get("name") or ""))
+
+    existing_keys = {_key_of(s) for s in sites}
+    sk = ""
+    if any(ord(ch) > 127 for ch in args.name) or session_key(args.name) in existing_keys:
+        host = re.sub(r"^https?://", "", root_of(args.url)).lower()
+        sk = re.sub(r"[^a-z0-9_-]+", "_", host).strip("_")
+        if sk in existing_keys:
+            raise SystemExit(f"错误：session_key '{sk}' 已被占用（URL 是否重复？）")
+        print(f"提示：站点名含非 ASCII 或派生 key 冲突，使用显式 session_key: {sk}")
 
     # 框架探测
     is_newapi, sys_name, version = detect_framework(args.url)
@@ -140,7 +174,7 @@ def main() -> None:
         print("探测：未能确认 New API 框架（可能非 New API / 有 WAF / 网络不可达）")
         print("提示：非 New API 站点请先跑一次观察日志，必要时用 probe_dom.py 校准 selectors")
 
-    block = build_block(args, prefix)
+    block = build_block(args, prefix, sk)
     print("\n---- 生成的配置 ----")
     print(block)
     print("--------------------")

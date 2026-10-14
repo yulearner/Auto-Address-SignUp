@@ -99,7 +99,14 @@ def resolve_name(data: dict, keyword: str) -> tuple[str, dict]:
 def artifacts(data: dict, name: str) -> dict:
     """该站点的运行时产物路径（登录态 / 截图 / 数据库）。"""
     run = data.get("run") or {}
-    key = session_key(name)
+    # 显式 session_key 优先（与 models/config.py SiteConfig.session_key 一致）
+    key = ""
+    for s in data.get("sites") or []:
+        if str(s.get("name", "")) == name:
+            key = str(s.get("session_key") or "").strip().lower()
+            break
+    if not key:
+        key = session_key(name)
     return {
         "session": ROOT / str(run.get("sessions_dir", "sessions")) / f"{key}.json",
         "shots": sorted(

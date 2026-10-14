@@ -80,9 +80,17 @@ class SiteConfig:
     # 站点特有选择器与选项（原始字典透传，由适配器自行解释）
     selectors: dict[str, Any] = field(default_factory=dict)
 
+    # 显式登录态文件名（yaml 键：session_key）。
+    # 背景：中文等非 ASCII 站点名经安全化后可能派生出相同 key
+    # （如「南梁API」「烁API」都会派生为 "api"），导致多个站点共用
+    # 同一个 session 文件、登录态互相覆盖。显式配置可彻底避免碰撞。
+    session_key_override: str = ""
+
     @property
     def session_key(self) -> str:
-        """登录态文件的键名（取站点名的小写安全形式）。"""
+        """登录态文件的键名（显式配置优先，否则取站点名的小写安全形式）。"""
+        if self.session_key_override:
+            return self.session_key_override
         return re.sub(r"[^a-zA-Z0-9_-]+", "_", self.name).strip("_").lower() or "site"
 
 
@@ -181,6 +189,10 @@ def _parse_site(index: int, raw: dict[str, Any]) -> SiteConfig:
         checkin_enabled=bool((checkin_raw or {}).get("enabled", True)),
         logout_after=bool(raw.get("logout_after", False)),
         save_session=bool(raw.get("save_session", True)),
+        # 显式 session_key：清洗为安全文件名（小写、字母数字下划线中划线）
+        session_key_override=re.sub(
+            r"[^a-z0-9_-]+", "_", str(raw.get("session_key") or "").strip().lower()
+        ).strip("_"),
         site_timeout=int(raw["site_timeout"]) if raw.get("site_timeout") else None,
         browser_timeout=int(raw["browser_timeout"]) if raw.get("browser_timeout") else None,
         selectors=dict(raw.get("selectors") or {}),
